@@ -1,0 +1,18 @@
+[submodule "esp-idf"]
+	path = esp-idf
+	url = https://github.com/espressif/esp-idf.git
+[submodule "components/arduino-esp32"]
+	path = components/arduino-esp32
+	url = https://github.com/espressif/arduino-esp32.git
+[submodule "components/ArduinoJson"]
+	path = components/ArduinoJson
+	url = https://github.com/bblanchon/ArduinoJson.git
+[submodule "components/ArduinoWebsockets"]
+	path = components/ArduinoWebsockets
+	url = https://github.com/gilmaimon/ArduinoWebsockets
+[submodule "components/PageBuilder"]
+	path = components/PageBuilder
+	url = https://github.com/Hieromon/PageBuilder.git
+[submodule "components/AutoConnect"]
+	path = components/AutoConnect
+	url = https://github.com/Hieromon/AutoConnect.git
