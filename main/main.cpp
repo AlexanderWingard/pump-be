@@ -58,6 +58,7 @@ struct Pump {
   unsigned long run_start = 0;
   unsigned long run_for = 0;
   int last_triggered = -1;
+  int disabled_for = 0;
   PumpStorage *data;
 
   void turn_off() {
@@ -107,7 +108,11 @@ struct Pump {
         last_triggered = time.tm_hour;
         auto ml = data->schedule[time.tm_hour];
         auto ml_per_us = data->ml_per_us;
-        if(ml_per_us == 0) {
+        if(disabled_for > 0) {
+          disabled_for--;
+          return;
+        }
+        if(ml_per_us == 0 || ml == 0) {
           return;
         }
         auto us = ml / ml_per_us;
@@ -230,11 +235,38 @@ void get_state(JsonObject res) {
     p["pump"] = i + 1;
     p["minute"] = pumps[i].data->trigger_min;
     p["ml_per_us"] = pumps[i].data->ml_per_us;
+    p["disabled"] = pumps[i].disabled_for;
+    if(pumps[i].state == Pump::state_t::RUNNING) {
+      unsigned long running_for = micros() - pumps[i].run_start;
+      p["running"] = running_for;
+      p["us"] = pumps[i].run_for;
+    }
     JsonArray schedule = p.createNestedArray("schedule");
     for(int j = 0; j < 24; j++) {
       schedule.add(pumps[i].data->schedule[j]);
     }
   }
+}
+
+void disable(JsonArray pumps, JsonVariant disable, JsonObject res) {
+  int dis = disable.as<int>();
+  for (JsonVariant pump_id : pumps) {
+    if(pump_by_id(pump_id.as<int>()) == nullptr) {
+      res["msg"] = "error";
+      res["error"] = "Invalid pump";
+      return;
+    }
+  }
+  if(!disable.is<int>() || dis < 0) {
+    res["msg"] = "error";
+    res["error"] = "Invalid number of periods";
+    return;
+  }
+  for (JsonVariant pump_id : pumps) {
+    Pump* pump = pump_by_id(pump_id);
+    pump->disabled_for = dis;
+  }
+  res["msg"] = "ok";
 }
 
 void set_sched(JsonArray pumps, JsonArray sched, JsonObject res) {
@@ -311,6 +343,10 @@ void onJson(JsonObject obj) {
   } else if (   strcmp(obj["msg"], "stop_pump") == 0) {
     int id           = obj["pump"];
     stop_pump(id, res);
+  } else if(    strcmp(obj["msg"], "disable") == 0) {
+    JsonArray pumps  = obj["pumps"];
+    JsonVariant dis  = obj["disable"];
+    disable(pumps, dis, res);
   } else if(    strcmp(obj["msg"], "set_cal") == 0) {
     int id           = obj["pump"];
     double ml        = obj["ml"];
