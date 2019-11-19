@@ -81,14 +81,21 @@ struct Pump {
     digitalWrite(pin, HIGH);
   }
 
-  bool run_request(unsigned long us, JsonObject res) {
+  void run_request(unsigned long us, JsonObject res) {
     if(state == IDLE) {
       add_run_info(us, res);
       turn_on(us);
-      return true;
+    } else {
+      res["msg"] = "error";
+      res["error"] = "Pump is running";
     }
-    return false;
   }
+
+  void stop(JsonObject res) {
+    turn_off();
+    add_run_info(0, res);
+  }
+
   void update(tm &time) {
     if(state == RUNNING) {
       unsigned long running_for = micros() - run_start;
@@ -166,18 +173,21 @@ void run_pump(int id, unsigned long us, double ml, JsonObject res) {
       res["error"] = "Invalid amount";
       return;
     }
-    if(pump->run_request(us, res)) {
-      // res["msg"] = "ok";
-      // res["us"] = us;
-      // res["ml"] = us * ml_per_us;
-    } else {
-      res["msg"] = "error";
-      res["error"] = "Pump is running";
-    }
+    pump->run_request(us, res);
   } else {
     res["msg"] = "error";
     res["error"] = "Invalid pump";
   }
+}
+
+void stop_pump(int id, JsonObject res) {
+  Pump* pump = pump_by_id(id);
+  if(pump == nullptr) {
+    res["msg"] = "error";
+    res["error"] = "Invalid pump";
+    return;
+  }
+  pump->stop(res);
 }
 
 void set_cal(int id, double ml, double us, JsonObject res) {
@@ -298,6 +308,9 @@ void onJson(JsonObject obj) {
     unsigned long us = obj["us"];
     double ml        = obj["ml"];
     run_pump(id, us, ml, res);
+  } else if (   strcmp(obj["msg"], "stop_pump") == 0) {
+    int id           = obj["pump"];
+    stop_pump(id, res);
   } else if(    strcmp(obj["msg"], "set_cal") == 0) {
     int id           = obj["pump"];
     double ml        = obj["ml"];
