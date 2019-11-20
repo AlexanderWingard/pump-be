@@ -68,7 +68,6 @@ struct Pump {
   }
   void add_run_info(unsigned long us, JsonObject nfo) {
     nfo["msg"] = "info";
-    nfo["info"] = "Running pump";
     nfo["pump"] = pump;
     nfo["ml"] =  us * data->ml_per_us;
     nfo["us"] = us;
@@ -110,6 +109,12 @@ struct Pump {
         auto ml_per_us = data->ml_per_us;
         if(disabled_for > 0) {
           disabled_for--;
+          StaticJsonDocument<capacity> doc;
+          JsonObject res = doc.to<JsonObject>();
+          res["msg"] = "skipped";
+          res["pump"] = pump;
+          res["disabled"] = disabled_for;
+          sendJson(res);
           return;
         }
         if(ml_per_us == 0 || ml == 0) {
