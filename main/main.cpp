@@ -27,6 +27,8 @@ WebServer Server;
 AutoConnect Portal(Server);
 AutoConnectConfig Config;
 WebsocketsClient client;
+struct tm boot_time;
+
 
 void sendJson(JsonObject obj);
 void get_time(JsonObject res);
@@ -219,18 +221,24 @@ void set_cal(int id, double ml, double us, JsonObject res) {
   res["ml_per_us"] = ml_per_us;
 }
 
-void timeToString(char* out, size_t len) {
-  struct tm tm;
-  getLocalTime(&tm);
+void timeToString(struct tm* tm, char* out, size_t len) {
   snprintf(out, len, "%04d-%02d-%02d %02d:%02d:%02d",
-           tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday,
-           tm.tm_hour, tm.tm_min, tm.tm_sec);
+           tm->tm_year + 1900, tm->tm_mon + 1, tm->tm_mday,
+           tm->tm_hour, tm->tm_min, tm->tm_sec);
 }
 
 void get_time(JsonObject res) {
   char t[32];
-  timeToString(t, sizeof(t));
+  struct tm tm;
+  getLocalTime(&tm);
+  timeToString(&tm, t, sizeof(t));
   res["time"] = t;
+}
+
+void get_boot_time(JsonObject res) {
+  char b[32];
+  timeToString(&boot_time, b, sizeof(b));
+  res["boot"] = b;
 }
 
 void get_state(JsonObject res) {
@@ -366,6 +374,7 @@ void onJson(JsonObject obj) {
     set_sched(pumps, sched, res);
   } else if(    strcmp(obj["msg"], "get_state") == 0) {
     get_time(res);
+    get_boot_time(res);
     get_state(res);
   } else {
     res["msg"] = "ack";
@@ -468,14 +477,18 @@ void loop() {
   }
   struct tm tm;
   getLocalTime(&tm);
-  tm.tm_hour  = tm.tm_min % 24;
-  tm.tm_min = tm.tm_sec;
-
   if ((tm.tm_year + 1900) < 2000) {
     Serial.println("Waiting for time");
     delay(1000);
     return;
   }
+  if ((boot_time.tm_year + 1900) < 2000) {
+    boot_time = tm;
+  }
+
+  tm.tm_hour  = tm.tm_min % 24;
+  tm.tm_min = tm.tm_sec;
+
   for(int i = 0; i < NRPUMPS; i++) {
     pumps[i].update(tm);
   }
