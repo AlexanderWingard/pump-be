@@ -61,19 +61,28 @@ struct Pump {
   unsigned long run_for = 0;
   int last_triggered = -1;
   int disabled_for = 0;
+  double ml_dosed = 0;
   PumpStorage *data;
 
   void turn_off() {
     digitalWrite(pin, LOW);
+    unsigned long running_for = micros() - run_start;
+    ml_dosed += running_for * data->ml_per_us;
     run_for = 0;
     state = IDLE;
   }
   void add_run_info(unsigned long us, JsonObject nfo) {
-    nfo["msg"] = "info";
+    nfo["msg"] = "pump_started";
     nfo["pump"] = pump;
     nfo["ml"] =  us * data->ml_per_us;
     nfo["us"] = us;
-    get_time(nfo);
+    nfo["dosed"] = ml_dosed;
+  }
+
+  void add_stop_info(JsonObject res) {
+    res["msg"] = "pump_stopped";
+    res["pump"] = pump;
+    res["dosed"] = ml_dosed;
   }
 
   void turn_on(unsigned long us) {
@@ -95,7 +104,7 @@ struct Pump {
 
   void stop(JsonObject res) {
     turn_off();
-    add_run_info(0, res);
+    add_stop_info(res);
   }
 
   void update(tm &time) {
@@ -103,6 +112,10 @@ struct Pump {
       unsigned long running_for = micros() - run_start;
       if(running_for >= run_for) {
         turn_off();
+        StaticJsonDocument<capacity> doc;
+        JsonObject res = doc.to<JsonObject>();
+        add_stop_info(res);
+        sendJson(res);
       }
     } else if (state == IDLE) {
       if(time.tm_hour != last_triggered && time.tm_min == data->trigger_min) {
@@ -248,6 +261,7 @@ void get_state(JsonObject res) {
     p["pump"] = i + 1;
     p["minute"] = pumps[i].data->trigger_min;
     p["ml_per_us"] = pumps[i].data->ml_per_us;
+    p["dosed"] = pumps[i].ml_dosed;
     p["disabled"] = pumps[i].disabled_for;
     if(pumps[i].state == Pump::state_t::RUNNING) {
       unsigned long running_for = micros() - pumps[i].run_start;
