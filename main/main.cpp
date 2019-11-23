@@ -62,12 +62,16 @@ struct Pump {
   int last_triggered = -1;
   int disabled_for = 0;
   double ml_dosed = 0;
+  bool nocount = false;
   PumpStorage *data;
 
   void turn_off() {
     digitalWrite(pin, LOW);
     unsigned long running_for = micros() - run_start;
-    ml_dosed += running_for * data->ml_per_us;
+    if(!nocount) {
+      ml_dosed += running_for * data->ml_per_us;
+    }
+    nocount = false;
     run_for = 0;
     state = IDLE;
   }
@@ -92,9 +96,10 @@ struct Pump {
     digitalWrite(pin, HIGH);
   }
 
-  void run_request(unsigned long us, JsonObject res) {
+  void run_request(unsigned long us, bool nc, JsonObject res) {
     if(state == IDLE) {
       add_run_info(us, res);
+      nocount = nc;
       turn_on(us);
     } else {
       res["msg"] = "error";
@@ -181,7 +186,7 @@ Pump* pump_by_id(int id) {
   return nullptr;
 }
 
-void run_pump(int id, unsigned long us, double ml, JsonObject res) {
+void run_pump(int id, unsigned long us, double ml, bool nocount, JsonObject res) {
   Pump* pump = pump_by_id(id);
   if(pump != nullptr) {
     auto ml_per_us = pump->data->ml_per_us;
@@ -198,7 +203,7 @@ void run_pump(int id, unsigned long us, double ml, JsonObject res) {
       res["error"] = "Invalid amount";
       return;
     }
-    pump->run_request(us, res);
+    pump->run_request(us, nocount, res);
   } else {
     res["msg"] = "error";
     res["error"] = "Invalid pump";
@@ -387,7 +392,8 @@ void onJson(JsonObject obj) {
     int id           = obj["pump"];
     unsigned long us = obj["us"];
     double ml        = obj["ml"];
-    run_pump(id, us, ml, res);
+    bool nocount     = obj["nocount"];
+    run_pump(id, us, ml, nocount, res);
   } else if (   strcmp(obj["msg"], "stop_pump") == 0) {
     int id           = obj["pump"];
     stop_pump(id, res);
