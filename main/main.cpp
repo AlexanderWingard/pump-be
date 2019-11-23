@@ -331,6 +331,27 @@ void set_sched(JsonArray pumps, JsonArray sched, JsonObject res) {
   res["msg"] = "ok";
 }
 
+void reset_dosed(JsonArray pumps, JsonObject res) {
+  if(pumps.size() == 0) {
+    res["msg"] = "error";
+    res["error"] = "No pumps selected";
+    return;
+  }
+  for (JsonVariant pump_id : pumps) {
+    if(pump_by_id(pump_id.as<int>()) == nullptr) {
+      res["msg"] = "error";
+      res["error"] = "Invalid pump";
+      return;
+    }
+  }
+  for (JsonVariant pump_id : pumps) {
+    Pump* pump = pump_by_id(pump_id);
+    pump->ml_dosed = 0;
+  }
+  save();
+  res["msg"] = "ok";
+}
+
 void set_spread(JsonArray minutes, JsonObject res) {
   if(minutes.size() != NRPUMPS) {
     res["msg"] = "error";
@@ -386,6 +407,9 @@ void onJson(JsonObject obj) {
     JsonArray pumps  = obj["pumps"];
     JsonArray sched  = obj["schedule"];
     set_sched(pumps, sched, res);
+  } else if(    strcmp(obj["msg"], "reset_dosed") == 0) {
+    JsonArray pumps  = obj["pumps"];
+    reset_dosed(pumps, res);
   } else if(    strcmp(obj["msg"], "get_state") == 0) {
     get_time(res);
     get_boot_time(res);
