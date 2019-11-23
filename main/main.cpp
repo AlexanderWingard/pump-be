@@ -260,6 +260,7 @@ void get_boot_time(JsonObject res) {
 }
 
 void get_state(JsonObject res) {
+  res["msg"] = "ok";
   JsonArray array = res.createNestedArray("pumps");
   for(int i = 0; i < NRPUMPS; i++) {
     JsonObject p = array.createNestedObject();
@@ -384,9 +385,7 @@ void onJson(JsonObject obj) {
   if (obj.containsKey("id")) {
     res["ack"] = obj["id"];
   }
-  if(!obj["msg"].is<char*>()) {
-    res["msg"] = "ack";
-  } else if (   strcmp(obj["msg"], "get_time") == 0) {
+  if (          strcmp(obj["msg"], "get_time") == 0) {
     get_time(res);
   } else if (   strcmp(obj["msg"], "run_pump") == 0) {
     int id           = obj["pump"];
@@ -420,10 +419,10 @@ void onJson(JsonObject obj) {
     get_time(res);
     get_boot_time(res);
     get_state(res);
-  } else {
-    res["msg"] = "ack";
   }
-  sendJson(res);
+  if(res.containsKey("msg")) {
+    sendJson(res);
+  }
 }
 
 void onWsMsg(WebsocketsMessage message) {
