@@ -426,7 +426,7 @@ void onJson(JsonObject obj) {
 }
 
 void onWsMsg(WebsocketsMessage message) {
-  StaticJsonDocument<capacity> doc;
+  DynamicJsonDocument doc(4096);
   DeserializationError error = deserializeJson(doc, message.data());
   JsonObject obj = doc.as<JsonObject>();
   if (error || obj.isNull()) {
@@ -436,8 +436,6 @@ void onWsMsg(WebsocketsMessage message) {
     Serial.println(message.data());
     return;
   }
-  serializeJson(obj, Serial);
-  Serial.println();
   onJson(obj);
 }
 
