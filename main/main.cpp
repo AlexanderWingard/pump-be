@@ -447,7 +447,6 @@ void onWsEvent(WebsocketsEvent event, String data) {
   } else if (event == WebsocketsEvent::GotPing) {
     Serial.println("Got a Ping!");
   } else if (event == WebsocketsEvent::GotPong) {
-    Serial.println("Got a Pong!");
   }
 }
 
@@ -488,6 +487,15 @@ void setup() {
   }
 }
 
+void ping_loop() {
+  static unsigned long prev = 0;
+  unsigned long now = micros();
+  if((now - prev) >= 45 * MICRO) {
+    prev = now;
+    client.ping();
+  }
+}
+
 void reconnect_loop() {
   static unsigned long prev = 0;
   unsigned long now = micros();
@@ -513,6 +521,7 @@ void loop() {
   sync_time_loop();
   if (client.available()) {
     client.poll();
+    ping_loop();
   } else {
     reconnect_loop();
   }
