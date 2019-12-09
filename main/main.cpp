@@ -9,6 +9,7 @@
 #include <ArduinoWebsockets.h>
 #include <AutoConnect.h>
 
+#include "freertos/task.h"
 
 #define NRPUMPS 5
 const int pins[NRPUMPS] = {12, 27, 33, 14, 22};
@@ -465,6 +466,24 @@ void sync_time() {
   configTzTime(PSTR("CET-1CEST,M3.5.0,M10.5.0/3"), ntpServer);
 }
 
+static TaskHandle_t pump_task_handle = NULL;
+
+
+void pump_task(void* arg) {
+  struct tm tm;
+  for(;;) {
+    if(have_time) {
+      getLocalTime(&tm);
+      tm.tm_hour  = tm.tm_min % 24;
+      tm.tm_min = tm.tm_sec;
+      for(int i = 0; i < NRPUMPS; i++) {
+        pumps[i].update(tm);
+      }
+    }
+    delay(1);
+  }
+  vTaskDelete(NULL);
+  pump_task_handle = NULL;
 }
 
 byte triggerHour = -1;
@@ -496,6 +515,7 @@ void setup() {
     Serial.println("WiFi connected: " + WiFi.localIP().toString());
     sync_time();
   }
+  xTaskCreate(pump_task, PSTR("pump_task"), 8192, NULL, 2, &pump_task_handle);
 }
 
 void ping_loop() {
@@ -547,11 +567,5 @@ void loop() {
     boot_time = tm;
   }
 
-  tm.tm_hour  = tm.tm_min % 24;
-  tm.tm_min = tm.tm_sec;
-
-  for(int i = 0; i < NRPUMPS; i++) {
-    pumps[i].update(tm);
-  }
   delay(1);
 }
