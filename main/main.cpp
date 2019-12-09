@@ -16,9 +16,9 @@ const int pins[NRPUMPS] = {12, 27, 33, 14, 22};
 
 using namespace websockets;
 
-const char* server_host = "bcws.axw.se";
+const char* server_host PROGMEM = "bcws.axw.se";
 const uint16_t server_port = 80;
-const char* ntpServer = "pool.ntp.org";
+const char* ntpServer PROGMEM = "pool.ntp.org";
 const long  gmtOffset_sec = 3600;
 const int   daylightOffset_sec = 3600;
 const size_t capacity = 1024;
@@ -76,17 +76,17 @@ struct Pump {
     state = IDLE;
   }
   void add_run_info(unsigned long us, JsonObject nfo) {
-    nfo["msg"] = "pump_started";
-    nfo["pump"] = pump;
-    nfo["ml"] =  us * data->ml_per_us;
-    nfo["us"] = us;
-    nfo["dosed"] = ml_dosed;
+    nfo[F("msg")] = F("pump_started");
+    nfo[F("pump")] = pump;
+    nfo[F("ml")] =  us * data->ml_per_us;
+    nfo[F("us")] = us;
+    nfo[F("dosed")] = ml_dosed;
   }
 
   void add_stop_info(JsonObject res) {
-    res["msg"] = "pump_stopped";
-    res["pump"] = pump;
-    res["dosed"] = ml_dosed;
+    res[F("msg")] = F("pump_stopped");
+    res[F("pump")] = pump;
+    res[F("dosed")] = ml_dosed;
   }
 
   void turn_on(unsigned long us) {
@@ -102,8 +102,8 @@ struct Pump {
       nocount = nc;
       turn_on(us);
     } else {
-      res["msg"] = "error";
-      res["error"] = "Pump is running";
+      res[F("msg")] = F("error");
+      res[F("error")] = F("Pump is running");
     }
   }
 
@@ -131,9 +131,9 @@ struct Pump {
           disabled_for--;
           StaticJsonDocument<capacity> doc;
           JsonObject res = doc.to<JsonObject>();
-          res["msg"] = "skipped";
-          res["pump"] = pump;
-          res["disabled"] = disabled_for;
+          res[F("msg")] = F("skipped");
+          res[F("pump")] = pump;
+          res[F("disabled")] = disabled_for;
           sendJson(res);
           return;
         }
@@ -158,7 +158,7 @@ void save() {
   storage.checksum = storage.calc_checksum();
   EEPROM.put(0, storage);
   EEPROM.commit();
-  Serial.println("Saved");
+  Serial.println(F("Saved"));
 }
 
 void load() {
@@ -192,29 +192,29 @@ void run_pump(int id, unsigned long us, double ml, bool nocount, JsonObject res)
     auto ml_per_us = pump->data->ml_per_us;
     if(ml > 0) {
       if(ml_per_us == 0) {
-        res["msg"] = "error";
-        res["error"] = "Pump not calibrated";
+        res[F("msg")] = F("error");
+        res[F("error")] = F("Pump not calibrated");
         return;
       }
       us = ml / ml_per_us;
     }
     if (us == 0) {
-      res["msg"] = "error";
-      res["error"] = "Invalid amount";
+      res[F("msg")] = F("error");
+      res[F("error")] = F("Invalid amount");
       return;
     }
     pump->run_request(us, nocount, res);
   } else {
-    res["msg"] = "error";
-    res["error"] = "Invalid pump";
+    res[F("msg")] = F("error");
+    res[F("error")] = F("Invalid pump");
   }
 }
 
 void stop_pump(int id, JsonObject res) {
   Pump* pump = pump_by_id(id);
   if(pump == nullptr) {
-    res["msg"] = "error";
-    res["error"] = "Invalid pump";
+    res[F("msg")] = F("error");
+    res[F("error")] = F("Invalid pump");
     return;
   }
   pump->stop(res);
@@ -223,24 +223,24 @@ void stop_pump(int id, JsonObject res) {
 void set_cal(int id, double ml, double us, JsonObject res) {
   Pump* pump = pump_by_id(id);
   if(pump == nullptr) {
-    res["msg"] = "error";
-    res["error"] = "Invalid pump";
+    res[F("msg")] = F("error");
+    res[F("error")] = F("Invalid pump");
     return;
   }
   if (!(ml > 0 && us > 0)) {
-    res["msg"] = "error";
-    res["error"] = "Invalid values";
+    res[F("msg")] = F("error");
+    res[F("error")] = F("Invalid values");
     return;
   }
   double ml_per_us = ml / us;
   pump->data->ml_per_us = ml_per_us;
   save();
-  res["msg"] = "ok";
-  res["ml_per_us"] = ml_per_us;
+  res[F("msg")] = F("ok");
+  res[F("ml_per_us")] = ml_per_us;
 }
 
 void timeToString(struct tm* tm, char* out, size_t len) {
-  snprintf(out, len, "%04d-%02d-%02d %02d:%02d:%02d",
+  snprintf_P(out, len, PSTR("%04d-%02d-%02d %02d:%02d:%02d"),
            tm->tm_year + 1900, tm->tm_mon + 1, tm->tm_mday,
            tm->tm_hour, tm->tm_min, tm->tm_sec);
 }
@@ -250,31 +250,31 @@ void get_time(JsonObject res) {
   struct tm tm;
   getLocalTime(&tm);
   timeToString(&tm, t, sizeof(t));
-  res["time"] = t;
+  res[F("time")] = t;
 }
 
 void get_boot_time(JsonObject res) {
   char b[32];
   timeToString(&boot_time, b, sizeof(b));
-  res["boot"] = b;
+  res[F("boot")] = b;
 }
 
 void get_state(JsonObject res) {
-  res["msg"] = "ok";
-  JsonArray array = res.createNestedArray("pumps");
+  res[F("msg")] = F("ok");
+  JsonArray array = res.createNestedArray(F("pumps"));
   for(int i = 0; i < NRPUMPS; i++) {
     JsonObject p = array.createNestedObject();
-    p["pump"] = i + 1;
-    p["minute"] = pumps[i].data->trigger_min;
-    p["ml_per_us"] = pumps[i].data->ml_per_us;
-    p["dosed"] = pumps[i].ml_dosed;
-    p["disabled"] = pumps[i].disabled_for;
+    p[F("pump")] = i + 1;
+    p[F("minute")] = pumps[i].data->trigger_min;
+    p[F("ml_per_us")] = pumps[i].data->ml_per_us;
+    p[F("dosed")] = pumps[i].ml_dosed;
+    p[F("disabled")] = pumps[i].disabled_for;
     if(pumps[i].state == Pump::state_t::RUNNING) {
       unsigned long running_for = micros() - pumps[i].run_start;
-      p["running"] = running_for;
-      p["us"] = pumps[i].run_for;
+      p[F("running")] = running_for;
+      p[F("us")] = pumps[i].run_for;
     }
-    JsonArray schedule = p.createNestedArray("schedule");
+    JsonArray schedule = p.createNestedArray(F("schedule"));
     for(int j = 0; j < 24; j++) {
       schedule.add(pumps[i].data->schedule[j]);
     }
@@ -285,45 +285,45 @@ void disable(JsonArray pumps, JsonVariant disable, JsonObject res) {
   int dis = disable.as<int>();
   for (JsonVariant pump_id : pumps) {
     if(pump_by_id(pump_id.as<int>()) == nullptr) {
-      res["msg"] = "error";
-      res["error"] = "Invalid pump";
+      res[F("msg")] = F("error");
+      res[F("error")] = F("Invalid pump");
       return;
     }
   }
   if(!disable.is<int>() || dis < 0) {
-    res["msg"] = "error";
-    res["error"] = "Invalid number of periods";
+    res[F("msg")] = F("error");
+    res[F("error")] = F("Invalid number of periods");
     return;
   }
   for (JsonVariant pump_id : pumps) {
     Pump* pump = pump_by_id(pump_id);
     pump->disabled_for = dis;
   }
-  res["msg"] = "ok";
+  res[F("msg")] = F("ok");
 }
 
 void set_sched(JsonArray pumps, JsonArray sched, JsonObject res) {
   if(sched.size() != 24) {
-    res["msg"] = "error";
-    res["error"] = "Invalid schedule size";
+    res[F("msg")] = F("error");
+    res[F("error")] = F("Invalid schedule size");
     return;
   }
   if(pumps.size() == 0) {
-    res["msg"] = "error";
-    res["error"] = "No pumps selected";
+    res[F("msg")] = F("error");
+    res[F("error")] = F("No pumps selected");
     return;
   }
   for (JsonVariant pump_id : pumps) {
     if(pump_by_id(pump_id.as<int>()) == nullptr) {
-      res["msg"] = "error";
-      res["error"] = "Invalid pump";
+      res[F("msg")] = F("error");
+      res[F("error")] = F("Invalid pump");
       return;
     }
   }
   for (JsonVariant value : sched) {
     if(!value.is<double>()) {
-      res["msg"] = "error";
-      res["error"] = "Invalid schedule entry";
+      res[F("msg")] = F("error");
+      res[F("error")] = F("Invalid schedule entry");
       return;
     }
   }
@@ -334,19 +334,19 @@ void set_sched(JsonArray pumps, JsonArray sched, JsonObject res) {
     }
   }
   save();
-  res["msg"] = "ok";
+  res[F("msg")] = F("ok");
 }
 
 void reset_dosed(JsonArray pumps, JsonObject res) {
   if(pumps.size() == 0) {
-    res["msg"] = "error";
-    res["error"] = "No pumps selected";
+    res[F("msg")] = F("error");
+    res[F("error")] = F("No pumps selected");
     return;
   }
   for (JsonVariant pump_id : pumps) {
     if(pump_by_id(pump_id.as<int>()) == nullptr) {
-      res["msg"] = "error";
-      res["error"] = "Invalid pump";
+      res[F("msg")] = F("error");
+      res[F("error")] = F("Invalid pump");
       return;
     }
   }
@@ -355,20 +355,20 @@ void reset_dosed(JsonArray pumps, JsonObject res) {
     pump->ml_dosed = 0;
   }
   save();
-  res["msg"] = "ok";
+  res[F("msg")] = F("ok");
 }
 
 void set_spread(JsonArray minutes, JsonObject res) {
   if(minutes.size() != NRPUMPS) {
-    res["msg"] = "error";
-    res["error"] = "Invalid number of minutes";
+    res[F("msg")] = F("error");
+    res[F("error")] = F("Invalid number of minutes");
     return;
   }
   for (int i = 0; i < minutes.size(); i++) {
     int minute = minutes[i].as<int>();
     if(!minutes[i].is<int>() && minute >= 0 && minute < 60) {
-      res["msg"] = "error";
-      res["error"] = "Invalid minute";
+      res[F("msg")] = F("error");
+      res[F("error")] = F("Invalid minute");
       return;
     }
   }
@@ -376,51 +376,62 @@ void set_spread(JsonArray minutes, JsonObject res) {
     pumps[i].data->trigger_min = minutes[i];
   }
   save();
-  res["msg"] = "ok";
+  res[F("msg")] = F("ok");
+}
+
 }
 
 void onJson(JsonObject obj) {
   DynamicJsonDocument doc(4096);
   JsonObject res = doc.to<JsonObject>();
-  if (obj.containsKey("id")) {
-    res["ack"] = obj["id"];
+  if (obj.containsKey(F("id"))) {
+    res[F("ack")] = obj[F("id")];
   }
-  if (          strcmp(obj["msg"], "get_time") == 0) {
+  if (          strcmp_P(obj[F("msg")], PSTR("get_time")) == 0) {
+    res[F("msg")] = F("ok");
     get_time(res);
-  } else if (   strcmp(obj["msg"], "run_pump") == 0) {
-    int id           = obj["pump"];
-    unsigned long us = obj["us"];
-    double ml        = obj["ml"];
-    bool nocount     = obj["nocount"];
+  } else if (   strcmp_P(obj[F("msg")], PSTR("run_pump")) == 0) {
+    int id           = obj[F("pump")];
+    unsigned long us = obj[F("us")];
+    double ml        = obj[F("ml")];
+    bool nocount     = obj[F("nocount")];
     run_pump(id, us, ml, nocount, res);
-  } else if (   strcmp(obj["msg"], "stop_pump") == 0) {
-    int id           = obj["pump"];
+  } else if (   strcmp_P(obj[F("msg")], PSTR("stop_pump")) == 0) {
+    int id           = obj[F("pump")];
     stop_pump(id, res);
-  } else if(    strcmp(obj["msg"], "disable") == 0) {
-    JsonArray pumps  = obj["pumps"];
-    JsonVariant dis  = obj["disable"];
+  } else if(    strcmp_P(obj[F("msg")], PSTR("disable")) == 0) {
+    JsonArray pumps  = obj[F("pumps")];
+    JsonVariant dis  = obj[F("disable")];
     disable(pumps, dis, res);
-  } else if(    strcmp(obj["msg"], "set_cal") == 0) {
-    int id           = obj["pump"];
-    double ml        = obj["ml"];
-    double us        = obj["us"];
+  } else if(    strcmp_P(obj[F("msg")], PSTR("set_cal")) == 0) {
+    int id           = obj[F("pump")];
+    double ml        = obj[F("ml")];
+    double us        = obj[F("us")];
     set_cal(id, ml, us, res);
-  } else if(    strcmp(obj["msg"], "set_spread") == 0) {
-    JsonArray minutes  = obj["minutes"];
+  } else if(    strcmp_P(obj[F("msg")], PSTR("set_spread")) == 0) {
+    JsonArray minutes  = obj[F("minutes")];
     set_spread(minutes, res);
-  } else if(    strcmp(obj["msg"], "set_sched") == 0) {
-    JsonArray pumps  = obj["pumps"];
-    JsonArray sched  = obj["schedule"];
+  } else if(    strcmp_P(obj[F("msg")], PSTR("set_sched")) == 0) {
+    JsonArray pumps  = obj[F("pumps")];
+    JsonArray sched  = obj[F("schedule")];
     set_sched(pumps, sched, res);
-  } else if(    strcmp(obj["msg"], "reset_dosed") == 0) {
-    JsonArray pumps  = obj["pumps"];
+  } else if(    strcmp_P(obj[F("msg")], PSTR("reset_dosed")) == 0) {
+    JsonArray pumps  = obj[F("pumps")];
     reset_dosed(pumps, res);
-  } else if(    strcmp(obj["msg"], "get_state") == 0) {
+  } else if(    strcmp_P(obj[F("msg")], PSTR("get_state")) == 0) {
     get_time(res);
     get_boot_time(res);
     get_state(res);
+  } else if(    strcmp_P(obj[F("msg")], PSTR("divide")) == 0) {
+    int a = obj[F("a")];
+    int b = obj[F("b")];
+    res[F("msg")] = F("divide_res");
+    res[F("res")] = a / b;
+  } else if(    strcmp_P(obj[F("msg")], PSTR("wifi_scan")) == 0) {
+    wifi_scan(res);
   }
-  if(res.containsKey("msg")) {
+
+  if(res.containsKey(F("msg"))) {
     sendJson(res);
   }
 }
@@ -432,7 +443,7 @@ void onWsMsg(WebsocketsMessage message) {
   if (error || obj.isNull()) {
     Serial.print(F("deserializeJson() failed: "));
     Serial.println(error.c_str());
-    Serial.print("Got Message: ");
+    Serial.print(F("Got Message: "));
     Serial.println(message.data());
     return;
   }
@@ -441,19 +452,19 @@ void onWsMsg(WebsocketsMessage message) {
 
 void onWsEvent(WebsocketsEvent event, String data) {
   if (event == WebsocketsEvent::ConnectionOpened) {
-    Serial.println("Connnection Opened");
+    Serial.println(F("Connnection Opened"));
   } else if (event == WebsocketsEvent::ConnectionClosed) {
-    Serial.println("Connnection Closed");
+    Serial.println(F("Connnection Closed"));
   } else if (event == WebsocketsEvent::GotPing) {
-    Serial.println("Got a Ping!");
+    Serial.println(F("Got a Ping!"));
   } else if (event == WebsocketsEvent::GotPong) {
   }
 }
 
 void sync_time() {
-  time_t before = time(nullptr);
-  configTzTime("CET-1CEST,M3.5.0,M10.5.0/3", ntpServer);
-  time_t after = time(nullptr);
+  configTzTime(PSTR("CET-1CEST,M3.5.0,M10.5.0/3"), ntpServer);
+}
+
 }
 
 byte triggerHour = -1;
@@ -469,8 +480,8 @@ void setup() {
     pumps[i].pin = pins[i];
     pumps[i].data = &storage.p_data[i];
   }
-  Serial.println("\nHello lexpump");
-  WiFi.setHostname("lexpump");
+  Serial.println(F("\nHello lexpump"));
+  WiFi.setHostname(PSTR("lexpump"));
 
   client.onMessage(onWsMsg);
   client.onEvent(onWsEvent);
@@ -528,7 +539,7 @@ void loop() {
   struct tm tm;
   getLocalTime(&tm);
   if ((tm.tm_year + 1900) < 2000) {
-    Serial.println("Waiting for time");
+    Serial.println(F("Waiting for time"));
     delay(1000);
     return;
   }
