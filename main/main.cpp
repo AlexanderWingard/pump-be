@@ -29,7 +29,7 @@ AutoConnect Portal(Server);
 AutoConnectConfig Config;
 WebsocketsClient client;
 struct tm boot_time;
-
+bool have_time = false;
 
 void sendJson(JsonObject obj);
 void get_time(JsonObject res);
@@ -462,6 +462,16 @@ void onWsEvent(WebsocketsEvent event, String data) {
   }
 }
 
+bool have_ip = false;
+void onWifiEvent(WiFiEvent_t event) {
+  if (       event == SYSTEM_EVENT_STA_DISCONNECTED) {
+    have_ip = false;
+  } else if (event == SYSTEM_EVENT_STA_GOT_IP) {
+    have_ip = true;
+  }
+  digitalWrite(13, !have_ip);
+}
+
 void sync_time() {
   configTzTime(PSTR("CET-1CEST,M3.5.0,M10.5.0/3"), ntpServer);
 }
@@ -530,26 +540,33 @@ void ping_loop() {
 void reconnect_loop() {
   static unsigned long prev = 0;
   unsigned long now = micros();
-  if((now - prev) >= 2 * MICRO) {
+  if((now - prev) >= 5 * MICRO) {
     prev = now;
-    Serial.println("Reconnecting");
-    client.connect(server_host, server_port, "/ws");
+    if (have_ip) {
+      Serial.println(F("Reconnecting to server"));
+      client.connect(server_host, server_port, F("/ws"));
+    } else {
+      Serial.println(F("Reconnecting to wifi"));
+      WiFi.reconnect();
+    }
   }
 }
 
 void sync_time_loop() {
   static unsigned long prev = 0;
   unsigned long now = micros();
-  if((now - prev) > 5 * 60 * MICRO) {
+  if((now - prev) > 5 * 60 * MICRO || prev == 0) {
     prev = now;
     sync_time();
   }
 }
 
-byte lastTimeSync = -1;
 void loop() {
   Portal.handleClient();
   sync_time_loop();
+  if(have_ip) {
+    sync_time_loop();
+  }
   if (client.available()) {
     client.poll();
     ping_loop();
@@ -562,6 +579,8 @@ void loop() {
     Serial.println(F("Waiting for time"));
     delay(1000);
     return;
+  } else {
+    have_time = true;
   }
   if ((boot_time.tm_year + 1900) < 2000) {
     boot_time = tm;
