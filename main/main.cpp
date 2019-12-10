@@ -1,14 +1,12 @@
 #include <EEPROM.h>
 #include <WiFi.h>
-#include <WebServer.h>
 #include <time.h>
+#include <ESPmDNS.h>
 #define ARDUINOJSON_USE_DOUBLE 1
 #define ARDUINOJSON_POSITIVE_EXPONENTIATION_THRESHOLD 1e9
 #define ARDUINOJSON_NEGATIVE_EXPONENTIATION_THRESHOLD 1e-9
 #include <ArduinoJson.h>
 #include <ArduinoWebsockets.h>
-#include <AutoConnect.h>
-
 #include "freertos/task.h"
 
 #define NRPUMPS 5
@@ -24,10 +22,9 @@ const long  gmtOffset_sec = 3600;
 const int   daylightOffset_sec = 3600;
 const size_t capacity = 1024;
 
-WebServer Server;
-AutoConnect Portal(Server);
-AutoConnectConfig Config;
 WebsocketsClient client;
+WebsocketsServer server;
+WebsocketsClient server_client;
 struct tm boot_time;
 bool have_time = false;
 
@@ -185,9 +182,10 @@ void load() {
 }
 
 void sendJson(JsonObject obj) {
-  char output[2048];
+  String output;
   serializeJson(obj, output);
   client.send(output);
+  server_client.send(output);
 }
 
 Pump* pump_by_id(int id) {
@@ -365,7 +363,6 @@ void reset_dosed(JsonArray pumps, JsonObject res) {
     Pump* pump = pump_by_id(pump_id);
     pump->ml_dosed = 0;
   }
-  save();
   res[F("msg")] = F("ok");
 }
 
@@ -390,6 +387,15 @@ void set_spread(JsonArray minutes, JsonObject res) {
   res[F("msg")] = F("ok");
 }
 
+void wifi_scan(JsonObject res) {
+  int n = WiFi.scanNetworks();
+  JsonArray array = res.createNestedArray(F("networks"));
+  for (int i = 0; i < n; ++i) {
+    JsonObject network = array.createNestedObject();
+    network[F("ssid")] = WiFi.SSID(i);
+    network[F("rssi")] = WiFi.RSSI(i);
+  }
+  res[F("msg")] = F("ok");
 }
 
 void onJson(JsonObject obj) {
@@ -520,21 +526,19 @@ void setup() {
     pumps[i].data = &storage.p_data[i];
   }
   Serial.println(F("\nHello lexpump"));
+  pinMode(13, OUTPUT);
+  digitalWrite(13, HIGH);
   WiFi.setHostname(PSTR("lexpump"));
+  WiFi.mode(WIFI_AP_STA);
+  WiFi.softAP(PSTR("lexpump"));
+  WiFi.onEvent(onWifiEvent);
+  WiFi.begin(PSTR("L3-wifi"), PSTR("L3333333"));
+  MDNS.begin(PSTR("lexpump"));
 
+  server.listen(80);
   client.onMessage(onWsMsg);
   client.onEvent(onWsEvent);
 
-  Config.ticker = true;
-  Config.tickerPort = 13;
-  Config.tickerOn = HIGH;
-  Config.autoReconnect = true;
-  Portal.config(Config);
-
-  if (Portal.begin()) {
-    Serial.println("WiFi connected: " + WiFi.localIP().toString());
-    sync_time();
-  }
   xTaskCreate(pump_task, PSTR("pump_task"), 8192, NULL, 2, &pump_task_handle);
 }
 
@@ -572,16 +576,23 @@ void sync_time_loop() {
 }
 
 void loop() {
-  Portal.handleClient();
-  sync_time_loop();
   static unsigned long prev_mem_info = 0;
   unsigned long now = micros();
   if((now - prev_mem_info) > 5 * MICRO) {
     prev_mem_info = now;
     print_mem();
   }
+
   if(have_ip) {
     sync_time_loop();
+  }
+  if (server.poll()) {
+    server_client = server.accept();
+    server_client.onMessage(onWsMsg);
+    server_client.onEvent(onWsEvent);
+  }
+  if(server_client.available()) {
+    server_client.poll();
   }
   if (client.available()) {
     client.poll();

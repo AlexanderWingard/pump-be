@@ -1,2 +1,2 @@
-COMPONENT_ADD_INCLUDEDIRS := ../ArduinoWebsockets/src ../PageBuilder/src ../AutoConnect/src
+COMPONENT_ADD_INCLUDEDIRS := ../ArduinoWebsockets/src
 COMPONENT_SRCDIRS := $(COMPONENT_ADD_INCLUDEDIRS)
