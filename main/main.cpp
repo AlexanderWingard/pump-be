@@ -34,6 +34,16 @@ bool have_time = false;
 void sendJson(JsonObject obj);
 void get_time(JsonObject res);
 
+void print_mem() {
+  char ptrTaskList[512];
+  vTaskList(ptrTaskList);
+  Serial.println(F("**********************************"));
+  Serial.println(F("Task  State   Prio    Stack    Num"));
+  Serial.println(F("**********************************"));
+  Serial.print(ptrTaskList);
+  Serial.println(F("**********************************"));
+}
+
 struct PumpStorage {
   double ml_per_us = 0;
   int trigger_min = 0;
@@ -564,6 +574,12 @@ void sync_time_loop() {
 void loop() {
   Portal.handleClient();
   sync_time_loop();
+  static unsigned long prev_mem_info = 0;
+  unsigned long now = micros();
+  if((now - prev_mem_info) > 5 * MICRO) {
+    prev_mem_info = now;
+    print_mem();
+  }
   if(have_ip) {
     sync_time_loop();
   }
