@@ -34,11 +34,8 @@ void get_time(JsonObject res);
 void print_mem() {
   char ptrTaskList[512];
   vTaskList(ptrTaskList);
-  Serial.println(F("**********************************"));
-  Serial.println(F("Task  State   Prio    Stack    Num"));
-  Serial.println(F("**********************************"));
+  Serial.println(F("Task Name\tStatus\tPrio\tHWM\tTask\tAffinity"));
   Serial.print(ptrTaskList);
-  Serial.println(F("**********************************"));
 }
 
 struct PumpStorage {
