@@ -1,7 +1,7 @@
-#include <EEPROM.h>
 #include <WiFi.h>
 #include <time.h>
 #include <ESPmDNS.h>
+#include <Preferences.h>
 #define ARDUINOJSON_USE_DOUBLE 1
 #define ARDUINOJSON_POSITIVE_EXPONENTIATION_THRESHOLD 1e9
 #define ARDUINOJSON_NEGATIVE_EXPONENTIATION_THRESHOLD 1e-9
@@ -23,6 +23,7 @@ const long  gmtOffset_sec = 3600;
 const int   daylightOffset_sec = 3600;
 const size_t capacity = 1024;
 
+Preferences preferences;
 WebsocketsClient client;
 WebsocketsServer server;
 WebsocketsClient server_client;
@@ -32,6 +33,7 @@ bool have_time = false;
 void sendJson(JsonObject obj);
 void get_time(JsonObject res);
 void main_task(void* arg);
+void get_persistent_state(JsonObject res);
 QueueHandle_t send_queue;
 struct pump_message {
   enum state_t {PUMP_START, PUMP_STOP, PUMP_DISABLED} message;
@@ -50,26 +52,6 @@ void print_mem() {
   Serial.print(ptrTaskList);
 }
 
-struct PumpStorage {
-  double ml_per_us = 0;
-  int trigger_min = 0;
-  double schedule[24] = {};
-};
-
-struct Storage {
-  unsigned long checksum = 0;
-  PumpStorage p_data[NRPUMPS];
-
-  unsigned long calc_checksum() {
-    unsigned long sum = 0;
-    char *bytes = (char *)&p_data;
-    for(int i = 0; i < sizeof(p_data); i++) {
-      sum += bytes[i];
-    }
-    return sum;
-  }
-} storage;
-
 struct Pump {
   int pin;
   int pump;
@@ -80,13 +62,15 @@ struct Pump {
   int disabled_for = 0;
   double ml_dosed = 0;
   bool nocount = false;
-  PumpStorage *data;
+  double ml_per_us = 0;
+  int trigger_min = 0;
+  double schedule[24] = {};
 
   void turn_off() {
     digitalWrite(pin, LOW);
     unsigned long running_for = micros() - run_start;
     if(!nocount) {
-      ml_dosed += running_for * data->ml_per_us;
+      ml_dosed += running_for * ml_per_us;
     }
     nocount = false;
     run_for = 0;
@@ -95,7 +79,7 @@ struct Pump {
   void add_run_info(unsigned long us, JsonObject nfo) {
     nfo[F("msg")] = F("pump_started");
     nfo[F("pump")] = pump;
-    nfo[F("ml")] =  us * data->ml_per_us;
+    nfo[F("ml")] =  us * ml_per_us;
     nfo[F("us")] = us;
     nfo[F("dosed")] = ml_dosed;
   }
@@ -141,10 +125,9 @@ struct Pump {
         xQueueSend(send_queue, &msg, portMAX_DELAY);
       }
     } else if (state == IDLE) {
-      if(time.tm_hour != last_triggered && time.tm_min == data->trigger_min) {
+      if(time.tm_hour != last_triggered && time.tm_min == trigger_min) {
         last_triggered = time.tm_hour;
-        auto ml = data->schedule[time.tm_hour];
-        auto ml_per_us = data->ml_per_us;
+        auto ml = schedule[time.tm_hour];
         if(disabled_for > 0) {
           disabled_for--;
           struct pump_message msg;
@@ -175,22 +158,39 @@ Pump pumps[NRPUMPS];
 
 
 void save() {
-  storage.checksum = storage.calc_checksum();
-  EEPROM.put(0, storage);
-  EEPROM.commit();
-  Serial.println(F("Saved"));
+  preferences.begin(PSTR("lexpump"));
+  DynamicJsonDocument doc(4096);
+  JsonObject obj = doc.to<JsonObject>();
+  String out;
+  get_persistent_state(obj);
+  serializeJson(doc, out);
+  preferences.putString(PSTR("config"), out);
+  preferences.end();
 }
 
 void load() {
-  Storage loaded;
-  EEPROM.get(0, loaded);
-  if(loaded.calc_checksum() == loaded.checksum) {
-    storage = loaded;
-    Serial.print(F("Successfully loaded from EEPROM"));
+  preferences.begin(PSTR("lexpump"));
+  DynamicJsonDocument doc(4096);
+  String stored = preferences.getString(PSTR("config"));
+  DeserializationError error = deserializeJson(doc, stored);
+  JsonObject obj = doc.as<JsonObject>();
+  if (error || obj.isNull()) {
+    Serial.println(F("Failed to load preferences"));
   } else {
-    Serial.println(F("Failed to load from EEPROM"));
-    save();
+    for(int i = 0; i < NRPUMPS; i++) {
+      JsonVariant sched = obj[F("pumps")][i][F("schedule")];
+      int min = obj[F("pumps")][i][F("minute")];
+      double ml_per_us = obj[F("pumps")][i][F("ml_per_us")];
+      pumps[i].trigger_min = min;
+      pumps[i].ml_per_us = ml_per_us;
+      for(int hr = 0; hr <24; hr++) {
+        pumps[i].schedule[hr] = sched[hr];
+      }
+    }
+    Serial.println(F("Loaded preferences"));
+    serializeJson(doc, Serial);
   }
+  preferences.end();
 }
 
 void sendJson(JsonObject obj) {
@@ -210,7 +210,7 @@ Pump* pump_by_id(int id) {
 void run_pump(int id, unsigned long us, double ml, bool nocount, JsonObject res) {
   Pump* pump = pump_by_id(id);
   if(pump != nullptr) {
-    auto ml_per_us = pump->data->ml_per_us;
+    auto ml_per_us = pump->ml_per_us;
     if(ml > 0) {
       if(ml_per_us == 0) {
         res[F("msg")] = F("error");
@@ -254,7 +254,7 @@ void set_cal(int id, double ml, double us, JsonObject res) {
     return;
   }
   double ml_per_us = ml / us;
-  pump->data->ml_per_us = ml_per_us;
+  pump->ml_per_us = ml_per_us;
   save();
   res[F("msg")] = F("ok");
   res[F("ml_per_us")] = ml_per_us;
@@ -280,14 +280,28 @@ void get_boot_time(JsonObject res) {
   res[F("boot")] = b;
 }
 
+
+void get_persistent_state(JsonObject res) {
+  JsonArray array = res.createNestedArray(F("pumps"));
+  for(int i = 0; i < NRPUMPS; i++) {
+    JsonObject p = array.createNestedObject();
+    p[F("minute")] = pumps[i].trigger_min;
+    p[F("ml_per_us")] = pumps[i].ml_per_us;
+    JsonArray schedule = p.createNestedArray(F("schedule"));
+    for(int j = 0; j < 24; j++) {
+      schedule.add(pumps[i].schedule[j]);
+    }
+  }
+}
+
 void get_state(JsonObject res) {
   res[F("msg")] = F("ok");
   JsonArray array = res.createNestedArray(F("pumps"));
   for(int i = 0; i < NRPUMPS; i++) {
     JsonObject p = array.createNestedObject();
     p[F("pump")] = i + 1;
-    p[F("minute")] = pumps[i].data->trigger_min;
-    p[F("ml_per_us")] = pumps[i].data->ml_per_us;
+    p[F("minute")] = pumps[i].trigger_min;
+    p[F("ml_per_us")] = pumps[i].ml_per_us;
     p[F("dosed")] = pumps[i].ml_dosed;
     p[F("disabled")] = pumps[i].disabled_for;
     if(pumps[i].state == Pump::state_t::RUNNING) {
@@ -297,7 +311,7 @@ void get_state(JsonObject res) {
     }
     JsonArray schedule = p.createNestedArray(F("schedule"));
     for(int j = 0; j < 24; j++) {
-      schedule.add(pumps[i].data->schedule[j]);
+      schedule.add(pumps[i].schedule[j]);
     }
   }
 }
@@ -351,7 +365,7 @@ void set_sched(JsonArray pumps, JsonArray sched, JsonObject res) {
   for (JsonVariant pump_id : pumps) {
     Pump* pump = pump_by_id(pump_id);
     for(int hr = 0; hr <24; hr++) {
-      pump->data->schedule[hr] = sched[hr];
+      pump->schedule[hr] = sched[hr];
     }
   }
   save();
@@ -393,7 +407,7 @@ void set_spread(JsonArray minutes, JsonObject res) {
     }
   }
   for (int i = 0; i < minutes.size(); i++) {
-    pumps[i].data->trigger_min = minutes[i];
+    pumps[i].trigger_min = minutes[i];
   }
   save();
   res[F("msg")] = F("ok");
@@ -530,16 +544,13 @@ void pump_task(void* arg) {
 byte triggerHour = -1;
 void setup() {
   Serial.begin(115200);
-  while (!EEPROM.begin(sizeof(Storage))) {
-  }
-  load();
   for(int i = 0; i < NRPUMPS; i++) {
     pinMode(pins[i], OUTPUT);
     digitalWrite(pins[i], LOW);
     pumps[i].pump = i + 1;
     pumps[i].pin = pins[i];
-    pumps[i].data = &storage.p_data[i];
   }
+  load();
   Serial.println(F("\nHello lexpump"));
   pinMode(13, OUTPUT);
   digitalWrite(13, HIGH);
