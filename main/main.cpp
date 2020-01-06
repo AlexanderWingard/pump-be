@@ -8,6 +8,7 @@
 #include <ArduinoJson.h>
 #include <ArduinoWebsockets.h>
 #include "freertos/task.h"
+#include "esp_task_wdt.h"
 
 #define NRPUMPS 5
 const int pins[NRPUMPS] = {12, 27, 33, 14, 22};
@@ -30,6 +31,17 @@ bool have_time = false;
 
 void sendJson(JsonObject obj);
 void get_time(JsonObject res);
+void main_task(void* arg);
+QueueHandle_t send_queue;
+struct pump_message {
+  enum state_t {PUMP_START, PUMP_STOP, PUMP_DISABLED} message;
+  int pump;
+  double us;
+  double ml;
+  double ml_dosed;
+  int disabled_for;
+};
+
 
 void print_mem() {
   char ptrTaskList[512];
@@ -95,10 +107,10 @@ struct Pump {
   }
 
   void turn_on(unsigned long us) {
+    digitalWrite(pin, HIGH);
     run_for = us;
     run_start = micros();
     state = RUNNING;
-    digitalWrite(pin, HIGH);
   }
 
   void run_request(unsigned long us, bool nc, JsonObject res) {
@@ -122,10 +134,11 @@ struct Pump {
       unsigned long running_for = micros() - run_start;
       if(running_for >= run_for) {
         turn_off();
-        StaticJsonDocument<capacity> doc;
-        JsonObject res = doc.to<JsonObject>();
-        add_stop_info(res);
-        sendJson(res);
+        struct pump_message msg;
+        msg.message = pump_message::PUMP_STOP;
+        msg.pump = pump;
+        msg.ml_dosed = ml_dosed;
+        xQueueSend(send_queue, &msg, portMAX_DELAY);
       }
     } else if (state == IDLE) {
       if(time.tm_hour != last_triggered && time.tm_min == data->trigger_min) {
@@ -134,22 +147,24 @@ struct Pump {
         auto ml_per_us = data->ml_per_us;
         if(disabled_for > 0) {
           disabled_for--;
-          StaticJsonDocument<capacity> doc;
-          JsonObject res = doc.to<JsonObject>();
-          res[F("msg")] = F("skipped");
-          res[F("pump")] = pump;
-          res[F("disabled")] = disabled_for;
-          sendJson(res);
+          struct pump_message msg;
+          msg.message = pump_message::PUMP_DISABLED;
+          msg.pump = pump;
+          msg.disabled_for = disabled_for;
+          xQueueSend(send_queue, &msg, portMAX_DELAY);
           return;
         }
         if(ml_per_us == 0 || ml == 0) {
           return;
         }
         auto us = ml / ml_per_us;
-        StaticJsonDocument<capacity> doc;
-        JsonObject res = doc.to<JsonObject>();
-        add_run_info(us, res);
-        sendJson(res);
+        struct pump_message msg;
+        msg.message = pump_message::PUMP_START;
+        msg.pump = pump;
+        msg.us = us;
+        msg.ml = us * ml_per_us;
+        msg.ml_dosed = ml_dosed;
+        xQueueSend(send_queue, &msg, portMAX_DELAY);
         turn_on(us);
       }
     }
@@ -489,21 +504,24 @@ void sync_time() {
   configTzTime(PSTR("CET-1CEST,M3.5.0,M10.5.0/3"), ntpServer);
 }
 
+static TaskHandle_t main_task_handle = NULL;
 static TaskHandle_t pump_task_handle = NULL;
 
 
 void pump_task(void* arg) {
   struct tm tm;
+  TickType_t xLastWakeTime = xTaskGetTickCount();
   for(;;) {
     if(have_time) {
       getLocalTime(&tm);
-      tm.tm_hour  = tm.tm_min % 24;
-      tm.tm_min = tm.tm_sec;
+      // Debug mode
+      // tm.tm_hour  = tm.tm_min % 24;
+      // tm.tm_min = tm.tm_sec;
       for(int i = 0; i < NRPUMPS; i++) {
         pumps[i].update(tm);
       }
     }
-    delay(1);
+    vTaskDelayUntil(&xLastWakeTime, 1);
   }
   vTaskDelete(NULL);
   pump_task_handle = NULL;
@@ -536,7 +554,12 @@ void setup() {
   client.onMessage(onWsMsg);
   client.onEvent(onWsEvent);
 
-  xTaskCreate(pump_task, PSTR("pump_task"), 8192, NULL, 2, &pump_task_handle);
+  send_queue = xQueueCreate(10, sizeof(struct pump_message));
+
+  xTaskCreatePinnedToCore(pump_task, PSTR("pump_task"), 8192, NULL, 1, &pump_task_handle, PRO_CPU_NUM);
+  xTaskCreatePinnedToCore(main_task, PSTR("main_task"), 32768, NULL, 1, &main_task_handle, APP_CPU_NUM);
+  disableLoopWDT();
+  vTaskDelete(NULL);
 }
 
 void ping_loop() {
@@ -572,13 +595,44 @@ void sync_time_loop() {
   }
 }
 
-void loop() {
+void mem_info_loop() {
   static unsigned long prev_mem_info = 0;
   unsigned long now = micros();
   if((now - prev_mem_info) > 5 * MICRO) {
     prev_mem_info = now;
     print_mem();
   }
+}
+
+void receive_send_queue() {
+  struct pump_message msg;
+  if (xQueueReceive(send_queue, &msg, 0)) {
+    StaticJsonDocument<capacity> nfo;
+    if(msg.message == pump_message::PUMP_START) {
+      nfo[F("msg")] = F("pump_started");
+      nfo[F("pump")] = msg.pump;
+      nfo[F("ml")] =  msg.ml;
+      nfo[F("us")] = msg.us;
+      nfo[F("dosed")] = msg.ml_dosed;
+    } else if(msg.message == pump_message::PUMP_STOP) {
+      nfo[F("msg")] = F("pump_stopped");
+      nfo[F("pump")] = msg.pump;
+      nfo[F("dosed")] = msg.ml_dosed;
+    } else if(msg.message == pump_message::PUMP_DISABLED) {
+      nfo[F("msg")] = F("skipped");
+      nfo[F("pump")] = msg.pump;
+      nfo[F("disabled")] = msg.disabled_for;
+    }
+    sendJson(nfo.as<JsonObject>());
+  }
+}
+
+void loop() {
+}
+
+
+void main_task(void* arg) {
+  for(;;) {
 
   if(have_ip) {
     sync_time_loop();
@@ -602,7 +656,7 @@ void loop() {
   if ((tm.tm_year + 1900) < 2000) {
     Serial.println(F("Waiting for time"));
     delay(1000);
-    return;
+    continue;
   } else {
     have_time = true;
   }
@@ -610,5 +664,8 @@ void loop() {
     boot_time = tm;
   }
 
-  delay(1);
+  receive_send_queue();
+
+  vTaskDelay(1);
+  }
 }
